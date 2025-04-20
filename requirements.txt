@@ -5,3 +5,5 @@ torch==2.1.1
 jinja2==3.1.2
 numpy==1.24.3
 python-multipart==0.0.6
+sentencepiece==0.1.99
+protobuf==3.20.0
