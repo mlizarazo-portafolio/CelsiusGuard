@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from embedding_generator import EmbeddingGenerator
 import torch
+import torch.nn as nn
 import numpy as np
 import os
 import logging
@@ -11,6 +12,25 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Definir la arquitectura del modelo LSTM
+class LSTMModel(nn.Module):
+    def __init__(self, input_size=1280, hidden_size=256, num_layers=2, output_size=1):
+        super(LSTMModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_size)
+        
+    def forward(self, x):
+        # x shape: (batch_size, seq_len, input_size)
+        lstm_out, _ = self.lstm(x)
+        # Tomamos solo la última salida del LSTM
+        last_output = lstm_out[:, -1, :]
+        # Aplicamos la capa fully connected
+        output = self.fc(last_output)
+        return output
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -29,8 +49,17 @@ try:
     model_path = "modelo/LSTM_best.pt"
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Modelo no encontrado en {model_path}")
-        
-    model = torch.load(model_path, map_location=device)
+    
+    # Crear instancia del modelo
+    model = LSTMModel().to(device)
+    
+    # Cargar el estado del modelo
+    state_dict = torch.load(model_path, map_location=device)
+    if isinstance(state_dict, dict):
+        model.load_state_dict(state_dict)
+    else:
+        model = state_dict.to(device)
+    
     model.eval()  # Set the model to evaluation mode
     logger.info("Modelo LSTM cargado exitosamente")
 
@@ -54,8 +83,11 @@ async def form_post(request: Request, sequence: str = Form(...)):
         # Generar embeddings
         embedding, _ = generator.generate_embeddings([sequence], ["input"])
         
-        # Convertir a tensor de PyTorch
+        # Convertir a tensor de PyTorch y ajustar la forma
         input_tensor = torch.FloatTensor(np.array(embedding)).to(device)
+        # Asegurar que el tensor tenga la forma correcta (batch_size, seq_len, input_size)
+        if len(input_tensor.shape) == 2:
+            input_tensor = input_tensor.unsqueeze(0)
         
         # Realizar predicción
         with torch.no_grad():
